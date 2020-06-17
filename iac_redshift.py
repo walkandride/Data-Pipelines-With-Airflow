@@ -30,9 +30,9 @@ DWH_DB=dev
 DWH_DB_USER=awsuser
 DWH_DB_PASSWORD=Passw0rd
 
-"""
+REGION=us-west-2
 
-REGION = 'us-west-2'
+"""
 
 config = configparser.ConfigParser()
 config.read_file(open('dwh.cfg'))
@@ -50,6 +50,8 @@ DWH_DB_USER = config.get("DWH", "DWH_DB_USER")
 DWH_DB_PASSWORD = config.get("DWH", "DWH_DB_PASSWORD")
 
 DWH_IAM_ROLE_NAME = config.get("DWH", "DWH_IAM_ROLE_NAME")
+
+REGION = config.get("DWH", "REGION")
 
 
 iam = boto3.client('iam',
@@ -181,10 +183,10 @@ def teardown():
 def main(mode):
     df = pd.DataFrame({"Param":
                        ["DWH_CLUSTER_TYPE", "DWH_NUM_NODES", "DWH_NODE_TYPE", "DWH_CLUSTER_IDENTIFIER",
-                           "DWH_DB", "DWH_DB_USER", "DWH_DB_PASSWORD", "DWH_IAM_ROLE_NAME"],
+                           "DWH_DB", "DWH_DB_USER", "DWH_DB_PASSWORD", "DWH_IAM_ROLE_NAME", "REGION"],
                        "Value":
                        [DWH_CLUSTER_TYPE, DWH_NUM_NODES, DWH_NODE_TYPE, DWH_CLUSTER_IDENTIFIER,
-                           DWH_DB, DWH_DB_USER, DWH_DB_PASSWORD, DWH_IAM_ROLE_NAME]
+                           DWH_DB, DWH_DB_USER, DWH_DB_PASSWORD, DWH_IAM_ROLE_NAME, REGION]
                        })
     print(df)
 
