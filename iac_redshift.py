@@ -1,14 +1,14 @@
-import pandas as pd
 import boto3
+import configparser
 import json
 import os
-from time import sleep
+import pandas as pd
 import psycopg2
-import configparser
+from time import sleep
 
 """
 Infrastructure As Code (IaC):  Provision an AWS Redshift cluster based upon 
-parameters found in dwh.cfg.
+parameters defined in dwh.cfg.
 
 # ---------------------------------
 # Example dwh.cfg file
@@ -34,6 +34,7 @@ REGION=us-west-2
 
 """
 
+# Read configuration parameters from file
 config = configparser.ConfigParser()
 config.read_file(open('dwh.cfg'))
 
@@ -81,7 +82,7 @@ redshift = boto3.client('redshift',
 
 def create_role():
     """
-    Creates an IAM role with s3 read access.
+    Create IAM role with s3 read access.
     """
     try:
         print("1.1 Creating a new IAM Role")
@@ -106,7 +107,7 @@ def create_role():
 
 def create_cluster(ROLE_ARN):
     """
-    Creates a Redshift cluster with 4 dc2.large type nodes and the specified IAM role.
+    Create a Redshift cluster, e.g. 4 nodes / dc2.large type, and the specified IAM role.
     """
     try:
         _response = redshift.create_cluster(
@@ -114,7 +115,7 @@ def create_cluster(ROLE_ARN):
             NodeType=DWH_NODE_TYPE,
             NumberOfNodes=int(DWH_NUM_NODES),
 
-            #Identifiers & Credentials
+            # Identifiers & Credentials
             DBName=DWH_DB,
             ClusterIdentifier=DWH_CLUSTER_IDENTIFIER,
             MasterUsername=DWH_DB_USER,
@@ -137,7 +138,7 @@ def prettyRedshiftProps(props):
 
 def check_status(status):
     """
-    Checks whether the cluster has the desired status.
+    Checks whether the cluster has the specified status.
     """
     try:
         myClusterProps = redshift.describe_clusters(
@@ -150,7 +151,7 @@ def check_status(status):
         print('cluster is deleted')
 
 
-def check_connection(ENDPOINT, PORT):
+def test_connection(ENDPOINT, PORT):
     """
     Checks if a connection can be made to the Redshift cluster that was created.
     """
@@ -164,9 +165,9 @@ def check_connection(ENDPOINT, PORT):
 
         print(config.get("PARSE", "VALUE"))
         conn.close()
-        print('connection to cluster is successful')
+        print('connection to cluster successful')
     except:
-        print('something went wrong, can not connect to cluster')
+        print('something went wrong, cannot connect to cluster')
 
 
 def teardown():
@@ -177,10 +178,10 @@ def teardown():
         redshift.delete_cluster(ClusterIdentifier=DWH_CLUSTER_IDENTIFIER,
                                 SkipFinalClusterSnapshot=True)
     except:
-        print('problem with deleting cluster')
+        print('problem deleting cluster')
 
 
-def main(mode):
+def main(action):
     df = pd.DataFrame({"Param":
                        ["DWH_CLUSTER_TYPE", "DWH_NUM_NODES", "DWH_NODE_TYPE", "DWH_CLUSTER_IDENTIFIER",
                            "DWH_DB", "DWH_DB_USER", "DWH_DB_PASSWORD", "DWH_IAM_ROLE_NAME", "REGION"],
@@ -190,7 +191,7 @@ def main(mode):
                        })
     print(df)
 
-    if mode.upper() == 'D':
+    if action.upper() == 'D':
         teardown()
         check_status('deleted')
     else:
@@ -206,7 +207,7 @@ def main(mode):
         PORT = redshift.describe_clusters(ClusterIdentifier=DWH_CLUSTER_IDENTIFIER)[
             'Clusters'][0]['Endpoint']['Port']
 
-        check_connection(ENDPOINT, PORT)
+        test_connection(ENDPOINT, PORT)
 
         print("===== Airflow Initialization =====")
         print(f"""Airflow AWS Connection
@@ -232,6 +233,6 @@ def main(mode):
 
 
 if __name__ == "__main__":
-    mode = input(
-        '[C]reate or [D]elete Redshift cluster? Enter C for create and D for delete: ')
-    main(mode)
+    action = input(
+        '[C]reate or [D]elete Redshift cluster? Enter C to create or D to delete: ')
+    main(action)
