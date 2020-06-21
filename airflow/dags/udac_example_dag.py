@@ -1,19 +1,22 @@
-from datetime import datetime, timedelta
-import os
 import logging
-from airflow import DAG
-from airflow.operators.dummy_operator import DummyOperator
-from airflow.operators import (StageToRedshiftOperator, LoadFactOperator,
-                                LoadDimensionOperator, DataQualityOperator)
-from airflow.operators.python_operator import PythonOperator
-from airflow.operators.postgres_operator import PostgresOperator
+import os
+from datetime import datetime, timedelta
 
-from helpers import SqlQueries
-from airflow.models import Variable
+from airflow import DAG
 from airflow.contrib.hooks.aws_hook import AwsHook
+from airflow.models import Variable
+from airflow.operators import (DataQualityOperator, LoadDimensionOperator,
+                               LoadFactOperator, StageToRedshiftOperator)
+from airflow.operators.dummy_operator import DummyOperator
+from airflow.operators.postgres_operator import PostgresOperator
+from airflow.operators.python_operator import PythonOperator
+from helpers import SqlQueries
 
 # AWS_KEY = os.environ.get('AWS_KEY')
 # AWS_SECRET = os.environ.get('AWS_SECRET')
+
+AWS_KEY = AwsHook('aws_credentials').get_credentials().access_key
+AWS_SECRET = AwsHook('aws_credentials').get_credentials().secret_key
 
 default_args = {
     'owner': 'udacity',
@@ -24,36 +27,44 @@ default_args = {
     'email_on_retry': False
 }
 
+
 def getS3Bucket():
     return Variable.get("s3_bucket")
 
-def getAWSKey():
-    return AwsHook("aws_credentials").get_credentials().access_key
-
-def getAWSSecret():
-    return AwsHook("aws_credentials").get_credentials().secret_key
 
 def getRegion():
     return 'us-west-2'
 
+
 def getRedshiftConnId():
     return 'redshift'
+
 
 dag = DAG('udac_example_dag',
           default_args=default_args,
           description='Load and transform data in Redshift with Airflow',
           schedule_interval='@hourly',
           catchup=False
-        )
+          )
 
-dq_checks=[
-    {'check_sql': "SELECT COUNT(*) FROM users WHERE userid is null", 'expected_result': 0},
-    {'check_sql': "SELECT COUNT(*) FROM songs WHERE songid is null", 'expected_result': 0},
-    {'dual_sql1': "SELECT COUNT(*) staging_events_next_song_cnt FROM staging_events WHERE page = 'NextSong'", 'dual_sql2': "SELECT COUNT(*) songplays_cnt FROM songplays", 'descr': "number of songplays"},
-    {'dual_sql1': "SELECT COUNT(*) songs_cnt FROM songs", 'dual_sql2': "SELECT COUNT(DISTINCT song_id) st_sng_song_cnt FROM staging_songs", 'descr': "# records in songs table and # DISTINCT staging_songs records"}
+dq_checks = [
+    {'check_sql': "SELECT COUNT(*) FROM users WHERE userid is null",
+     'expected_result': 0,
+     'descr': "null values in users.userid column"},
+    {'check_sql': "SELECT COUNT(*) FROM songs WHERE songid is null",
+     'expected_result': 0,
+     'descr': "null values in songs.songid column"},
+    {'check_sql': "SELECT COUNT(*) FROM(SELECT cnt, count(*) FROM (SELECT "
+        "songid, count(*) cnt FROM songs GROUP BY songid) GROUP BY cnt)",
+     'expected_result': 1,
+     'descr': "duplicate song ids found"},
+    {'dual_sql1': "SELECT COUNT(*) songs_cnt FROM songs",
+     'dual_sql2': "SELECT COUNT(DISTINCT song_id) st_sng_song_cnt "
+        "FROM staging_songs",
+     'descr': "# records in songs table and # DISTINCT staging_songs records"}
 ]
 
-start_operator = DummyOperator(task_id='Begin_execution',  dag=dag)
+start_operator = DummyOperator(task_id='Begin_execution', dag=dag)
 
 create_tables_task = PostgresOperator(
     task_id='create_tables',
@@ -69,10 +80,11 @@ stage_events_to_redshift = StageToRedshiftOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='staging_events',
     s3_bucket=getS3Bucket(),
-    s3_path='log_data/2018/11/2018-11-01-events.json', # "log_data/{{ execution_date.strftime('%Y') }}/{{ execution_date.strftime('%m') }}/{{ ds }}-events.json" or "log_data/{{ ds }}-events.csv"
-    aws_key=getAWSKey(),
-    aws_secret=getAWSSecret(),
-    region = getRegion()
+    s3_path='log_data',
+    aws_key=AWS_KEY,
+    aws_secret=AWS_SECRET,
+    region=getRegion(),
+    copy_json_option='s3://' + getS3Bucket() + '/log_json_path.json'
 )
 
 stage_songs_to_redshift = StageToRedshiftOperator(
@@ -82,10 +94,11 @@ stage_songs_to_redshift = StageToRedshiftOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='staging_songs',
     s3_bucket=getS3Bucket(),
-    s3_path='song_data/A/A/*/*.json',
-    aws_key=getAWSKey(),
-    aws_secret=getAWSSecret(),
-    region = getRegion()
+    s3_path='song_data',
+    aws_key=AWS_KEY,
+    aws_secret=AWS_SECRET,
+    region=getRegion(),
+    copy_json_option='auto'
 )
 
 load_songplays_table = LoadFactOperator(
@@ -94,7 +107,7 @@ load_songplays_table = LoadFactOperator(
     provide_context=True,
     redshift_conn_id=getRedshiftConnId(),
     table_name='songplays',
-    sql=SqlQueries.songplay_table_insert
+    insert_sql=SqlQueries.songplay_table_insert
 )
 
 load_user_dimension_table = LoadDimensionOperator(
@@ -104,7 +117,7 @@ load_user_dimension_table = LoadDimensionOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='users',
     insert_sql=SqlQueries.user_table_insert,
-    truncate='N'
+    truncate_table='Y'
 )
 
 load_song_dimension_table = LoadDimensionOperator(
@@ -114,7 +127,7 @@ load_song_dimension_table = LoadDimensionOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='songs',
     insert_sql=SqlQueries.song_table_insert,
-    truncate='N'
+    truncate_table='Y'
 )
 
 load_artist_dimension_table = LoadDimensionOperator(
@@ -124,7 +137,7 @@ load_artist_dimension_table = LoadDimensionOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='artists',
     insert_sql=SqlQueries.artist_table_insert,
-    truncate='N'
+    truncate_table='Y'
 )
 
 load_time_dimension_table = LoadDimensionOperator(
@@ -134,7 +147,7 @@ load_time_dimension_table = LoadDimensionOperator(
     redshift_conn_id=getRedshiftConnId(),
     table_name='time',
     insert_sql=SqlQueries.time_table_insert,
-    truncate='N'
+    truncate_table='Y'
 )
 
 run_quality_checks = DataQualityOperator(
@@ -142,12 +155,17 @@ run_quality_checks = DataQualityOperator(
     dag=dag,
     provide_context=True,
     redshift_conn_id=getRedshiftConnId(),
-    checks=dq_checks,
-    aws_key=getAWSKey(),
-    aws_secret=getAWSSecret()
+    checks=dq_checks
 )
 
 end_operator = DummyOperator(task_id='Stop_execution',  dag=dag)
 
-#start_operator >> create_tables_task >> [stage_events_to_redshift, stage_songs_to_redshift] >> load_songplays_table >> [load_song_dimension_table, load_user_dimension_table, load_artist_dimension_table, load_time_dimension_table] >> run_quality_checks >> end_operator
-start_operator >> [stage_events_to_redshift, stage_songs_to_redshift] >> load_songplays_table >> [load_song_dimension_table, load_user_dimension_table, load_artist_dimension_table, load_time_dimension_table] >> run_quality_checks >> end_operator
+start_operator >> \
+    create_tables_task >> [stage_events_to_redshift,
+                           stage_songs_to_redshift] >> \
+    load_songplays_table >> [load_song_dimension_table,
+                             load_user_dimension_table,
+                             load_artist_dimension_table,
+                             load_time_dimension_table] >> \
+    run_quality_checks >> \
+    end_operator

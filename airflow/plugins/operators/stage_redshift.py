@@ -2,9 +2,10 @@ from airflow.hooks.postgres_hook import PostgresHook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 
+
 class StageToRedshiftOperator(BaseOperator):
     """
-    Copies data from S3 to Redshift staging tables.
+    DAG operator to populate staging tables from source files.
 
     :param string  redshift_conn_id: reference to a specific redshift database
     :param string  table_name: redshift staging table to load
@@ -19,16 +20,17 @@ class StageToRedshiftOperator(BaseOperator):
     ui_color = '#358140'
 
     @apply_defaults
-    def __init__(self
-                , redshift_conn_id
-                , table_name
-                , s3_bucket
-                , s3_path
-                , aws_key
-                , aws_secret 
-                , region
-                , *args
-                , **kwargs):
+    def __init__(self,
+                 redshift_conn_id,
+                 table_name,
+                 s3_bucket,
+                 s3_path,
+                 aws_key,
+                 aws_secret,
+                 region,
+                 copy_json_option,
+                 *args,
+                 **kwargs):
 
         super(StageToRedshiftOperator, self).__init__(*args, **kwargs)
 
@@ -39,6 +41,7 @@ class StageToRedshiftOperator(BaseOperator):
         self.aws_key = aws_key
         self.aws_secret = aws_secret
         self.region = region
+        self.copy_json_option = copy_json_option
 
     def execute(self, context):
         self.log.info('StageToRedshiftOperator begin execute')
@@ -46,27 +49,6 @@ class StageToRedshiftOperator(BaseOperator):
         # connect to Redshift
         redshift_hook = PostgresHook(postgres_conn_id=self.redshift_conn_id)
         self.log.info(f"Connected with {self.redshift_conn_id}")
- 
-        # build copy statement template
-#        COPY_STMT = """
-#            COPY {} 
-#                FROM '{}' 
-#                ACCESS_KEY_ID '{}'
-#                SECRET_ACCESS_KEY '{}'
-#                REGION '{}'
-#                JSON 'auto'
-#                TIMEFORMAT as 'epochmillisecs'
-#                TRUNCATECOLUMNS BLANKSASNULL EMPTYASNULL
-#        """
-
-        # build copy statement based upon parameters
-#        sql_stmt = COPY_STMT.format(
-#            self.table_name
-#            , 's3://' + self.s3_bucket + '/' + self.s3_path  # 's3://udacity-dend/log_data'
-#            , self.aws_key 
-#            , self.aws_secret
-#            , self.region 
-#        )
 
         sql_stmt = f"""
             COPY {self.table_name} 
@@ -74,11 +56,12 @@ class StageToRedshiftOperator(BaseOperator):
                 ACCESS_KEY_ID '{self.aws_key}'
                 SECRET_ACCESS_KEY '{self.aws_secret}'
                 REGION '{self.region}'
-                JSON 'auto'
+                JSON '{self.copy_json_option}'
                 TIMEFORMAT as 'epochmillisecs'
                 TRUNCATECOLUMNS BLANKSASNULL EMPTYASNULL
         """
         self.log.info(f"copy sql: {sql_stmt}")
 
-#        redshift_hook.run(sql_stmt)
-        self.log.info(f"StageToRedshiftOperator copy complete - {self.table_name}")
+        redshift_hook.run(sql_stmt)
+        self.log.info(
+            f"StageToRedshiftOperator copy complete - {self.table_name}")
